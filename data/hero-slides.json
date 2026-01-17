@@ -1,0 +1,23 @@
+[
+  {
+    "id": 1,
+    "title": "Pure Wilderness",
+    "subtitle": "자연 그대로의 숨결을 느끼는 완벽한 탈출.",
+    "image": "/image/main-hero-1.jpg",
+    "alt": "Mountain"
+  },
+  {
+    "id": 2,
+    "title": "Starlit Night",
+    "subtitle": "쏟아지는 별빛 아래에서의 로맨틱한 하룻밤.",
+    "image": "/image/main-hero-2.jpg",
+    "alt": "Stars"
+  },
+  {
+    "id": 3,
+    "title": "Autumn Forest",
+    "subtitle": "오색 단풍으로 물든 숲속의 고요한 휴식.",
+    "image": "/image/main-hero-3.jpg",
+    "alt": "Autumn"
+  }
+]
