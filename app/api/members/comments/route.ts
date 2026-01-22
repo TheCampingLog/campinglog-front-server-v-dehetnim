@@ -1,18 +1,27 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import fs from "fs";
+import fs from "fs/promises"; // ✅ 비동기 파일 시스템 적용
 import path from "path";
 
 const commentsPath = path.join(process.cwd(), "data", "comments.json");
 const postsPath = path.join(process.cwd(), "data", "posts.json");
 const usersPath = path.join(process.cwd(), "data", "users.json");
 
-// 헬퍼 함수들
-const readData = (p: string) =>
-  fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, "utf8")) : [];
-const writeData = (p: string, d: any) =>
-  fs.writeFileSync(p, JSON.stringify(d, null, 2), "utf8");
+// 헬퍼 함수: 비동기 JSON 읽기/쓰기
+const readJson = async (p: string) => {
+  try {
+    const data = await fs.readFile(p, "utf8");
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+};
 
+const writeJson = async (p: string, d: any) => {
+  await fs.writeFile(p, JSON.stringify(d, null, 2), "utf8");
+};
+
+// [GET] 내 댓글 목록 조회
 export async function GET(request: Request) {
   try {
     const cookieStore = await cookies();
@@ -22,26 +31,35 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const allComments = readData(commentsPath);
-    const allPosts = readData(postsPath);
+    // 🚀 병렬 데이터 로드 (자바의 parallelStream과 유사한 효과)
+    const [allComments, allPosts] = await Promise.all([
+      readJson(commentsPath),
+      readJson(postsPath),
+    ]);
 
-    // 1. 내 이메일로 작성된 댓글만 필터링
+    // 1. 내 댓글 필터링
     const myComments = allComments.filter(
       (c: any) => c.authorEmail === userEmail
     );
 
-    // 2. 게시글 데이터와 결합하여 '원문 제목' 추가
+    // 2. 게시글 데이터와 조인 (Inner Join 느낌으로 필터링)
     const enrichedComments = myComments
       .map((comment: any) => {
         const parentPost = allPosts.find(
-          (p: any) => p.postId === comment.postId
+          (p: any) => Number(p.postId) === Number(comment.postId)
         );
+
+        // 🚀 핵심: 게시글이 없으면 null 반환 (나중에 filter로 제거)
+        if (!parentPost) return null;
+
         return {
           ...comment,
-          postTitle: parentPost ? parentPost.title : "삭제된 게시글입니다.",
+          postTitle: parentPost.title,
         };
       })
-      .sort((a: any, b: any) => b.commentId - a.commentId); // 최신순 정렬
+      // ✅ 3. 삭제된 게시글에 달린 댓글은 리스트에서 아예 제거 (데이터 무결성 보장)
+      .filter((c: any) => c !== null)
+      .sort((a: any, b: any) => b.commentId - a.commentId);
 
     return NextResponse.json(enrichedComments);
   } catch (error) {
@@ -52,34 +70,34 @@ export async function GET(request: Request) {
   }
 }
 
+// [POST] 댓글 등록
 export async function POST(request: Request) {
   try {
     const cookieStore = await cookies();
     const userEmail = cookieStore.get("user_email")?.value;
 
     if (!userEmail)
-      return NextResponse.json(
-        { success: false, message: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ success: false }, { status: 401 });
 
     const body = await request.json();
-    // ✅ authorImage를 추가로 받습니다.
     const { postId, content, author, authorImage } = body;
 
-    // ✅ 최신 유저 정보에서 프로필 이미지를 가져와 데이터 일관성 유지
-    const users = readData(usersPath);
+    const [allComments, allPosts, users] = await Promise.all([
+      readJson(commentsPath),
+      readJson(postsPath),
+      readJson(usersPath),
+    ]);
+
     const currentUser = users.find((u: any) => u.email === userEmail);
     const finalAuthorImage =
       currentUser?.profileImage || authorImage || "/image/default-profile.png";
 
-    const allComments = readData(commentsPath);
     const newComment = {
       commentId: Date.now(),
       postId: Number(postId),
       content,
       author,
-      authorImage: finalAuthorImage, // ✅ 필드 추가 저장
+      authorImage: finalAuthorImage,
       authorEmail: userEmail,
       createdAt: new Date()
         .toLocaleDateString("ko-KR")
@@ -87,18 +105,15 @@ export async function POST(request: Request) {
         .replace(/\.$/, ""),
     };
 
-    writeData(commentsPath, [newComment, ...allComments]);
-
-    // ✅ 1. 게시글의 댓글 수(commentCount) 증가
-    const posts = readData(postsPath);
-    const postIndex = posts.findIndex((p: any) => p.postId === Number(postId));
-    if (postIndex !== -1) {
-      posts[postIndex].commentCount = (posts[postIndex].commentCount || 0) + 1;
-      writeData(postsPath, posts);
-    }
-
-    // ✅ 2. 유저 활동량(commentCount) 증가
+    // 데이터 업데이트 로직
+    const postIndex = allPosts.findIndex(
+      (p: any) => Number(p.postId) === Number(postId)
+    );
     const userIndex = users.findIndex((u: any) => u.email === userEmail);
+
+    if (postIndex !== -1)
+      allPosts[postIndex].commentCount =
+        (allPosts[postIndex].commentCount || 0) + 1;
     if (userIndex !== -1) {
       if (!users[userIndex].activity)
         users[userIndex].activity = {
@@ -108,16 +123,22 @@ export async function POST(request: Request) {
           likeCount: 0,
         };
       users[userIndex].activity.commentCount += 1;
-      writeData(usersPath, users);
     }
+
+    // 🚀 일괄 비동기 저장 (트랜잭션 원자성 확보 노력)
+    await Promise.all([
+      writeJson(commentsPath, [newComment, ...allComments]),
+      writeJson(postsPath, allPosts),
+      writeJson(usersPath, users),
+    ]);
 
     return NextResponse.json({ success: true, comment: newComment });
   } catch (error) {
-    console.error("댓글 등록 오류:", error);
     return NextResponse.json({ success: false }, { status: 500 });
   }
 }
 
+// [DELETE] 댓글 삭제
 export async function DELETE(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -125,46 +146,46 @@ export async function DELETE(request: Request) {
     const cookieStore = await cookies();
     const userEmail = cookieStore.get("user_email")?.value;
 
-    const allComments = readData(commentsPath);
+    const [allComments, allPosts, users] = await Promise.all([
+      readJson(commentsPath),
+      readJson(postsPath),
+      readJson(usersPath),
+    ]);
+
     const targetComment = allComments.find(
       (c: any) => c.commentId === commentId
     );
 
     if (!targetComment || targetComment.authorEmail !== userEmail) {
-      return NextResponse.json(
-        { success: false, message: "Forbidden" },
-        { status: 403 }
-      );
+      return NextResponse.json({ success: false }, { status: 403 });
     }
 
-    writeData(
-      commentsPath,
-      allComments.filter((c: any) => c.commentId !== commentId)
+    const filteredComments = allComments.filter(
+      (c: any) => c.commentId !== commentId
     );
 
-    // ✅ 3. 게시글 댓글 수 감소
-    const posts = readData(postsPath);
-    const postIndex = posts.findIndex(
-      (p: any) => p.postId === targetComment.postId
+    // 게시물 및 유저 카운트 업데이트
+    const postIndex = allPosts.findIndex(
+      (p: any) => Number(p.postId) === Number(targetComment.postId)
     );
-    if (postIndex !== -1) {
-      posts[postIndex].commentCount = Math.max(
-        0,
-        posts[postIndex].commentCount - 1
-      );
-      writeData(postsPath, posts);
-    }
-
-    // ✅ 4. 유저 활동량 감소
-    const users = readData(usersPath);
     const userIndex = users.findIndex((u: any) => u.email === userEmail);
-    if (userIndex !== -1 && users[userIndex].activity) {
+
+    if (postIndex !== -1)
+      allPosts[postIndex].commentCount = Math.max(
+        0,
+        allPosts[postIndex].commentCount - 1
+      );
+    if (userIndex !== -1 && users[userIndex].activity)
       users[userIndex].activity.commentCount = Math.max(
         0,
         users[userIndex].activity.commentCount - 1
       );
-      writeData(usersPath, users);
-    }
+
+    await Promise.all([
+      writeJson(commentsPath, filteredComments),
+      writeJson(postsPath, allPosts),
+      writeJson(usersPath, users),
+    ]);
 
     return NextResponse.json({ success: true });
   } catch (error) {

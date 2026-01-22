@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState } from "react";
 import Image from "next/image";
 import { MessageSquare, Trash2 } from "lucide-react";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 
 interface Comment {
   commentId: number;
@@ -19,7 +20,7 @@ interface CommentSectionProps {
   nickname: string | null;
   currentUserEmail: string | null;
   profileImage: string | null;
-  variant?: "light" | "dark"; // ✅ variant 속성 추가
+  variant?: "light" | "dark";
 }
 
 export function CommentSection({
@@ -27,84 +28,89 @@ export function CommentSection({
   nickname,
   currentUserEmail,
   profileImage,
-  variant = "light", // ✅ 기본값 설정
+  variant = "light",
 }: CommentSectionProps) {
-  const [comments, setComments] = useState<Comment[]>([]);
+  const queryClient = useQueryClient(); // 자바의 CacheManager 역할
   const [commentInput, setCommentInput] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isDark = variant === "dark";
 
-  const isDark = variant === "dark"; // ✅ 테마 판별 변수
-
-  // 1. 댓글 리스트 페칭
-  const fetchComments = useCallback(async () => {
-    try {
+  // ✅ 1. 댓글 리스트 조회 (useQuery)
+  const { data: comments = [], isLoading } = useQuery<Comment[]>({
+    queryKey: ["comments", postId],
+    queryFn: async () => {
       const response = await fetch(`/api/community/comments?postId=${postId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setComments(data);
-      }
-    } catch (error) {
-      console.error("댓글 로드 오류:", error);
-    }
-  }, [postId]);
+      if (!response.ok) throw new Error("댓글 로드 실패");
+      return response.json();
+    },
+    enabled: !!postId, // 게시글 ID가 있을 때만 실행
+  });
 
-  useEffect(() => {
-    if (postId) fetchComments();
-  }, [postId, fetchComments]);
-
-  // 2. 댓글 등록 핸들러
-  const handleCommentSubmit = async () => {
-    if (!commentInput.trim()) return alert("댓글 내용을 입력해주세요.");
-    if (!nickname) return alert("로그인이 필요합니다.");
-    if (isSubmitting) return;
-
-    setIsSubmitting(true);
-    try {
+  // ✅ 2. 댓글 등록 (Mutation)
+  const submitMutation = useMutation({
+    mutationFn: async (newComment: any) => {
       const response = await fetch("/api/community/comments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          postId,
-          content: commentInput,
-          author: nickname,
-          authorEmail: currentUserEmail,
-          authorImage: profileImage || "/image/default-profile.png",
-        }),
+        body: JSON.stringify(newComment),
       });
+      if (!response.ok) throw new Error("등록 실패");
+      return response.json();
+    },
+    onSuccess: () => {
+      /**
+       * 🚀 캐시 무효화 (Invalidation) 전략
+       * 자바 스프링의 @CacheEvict와 동일한 역할을 수행하여 실시간 동기화를 구현합니다.
+       */
+      // (1) 현재 게시글의 댓글 목록 즉시 갱신
+      queryClient.invalidateQueries({ queryKey: ["comments", postId] });
 
-      if (response.ok) {
-        setCommentInput("");
-        fetchComments();
-      } else {
-        alert("댓글 등록에 실패했습니다.");
-      }
-    } catch (error) {
-      console.error("댓글 등록 에러:", error);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+      // (2) 마이페이지 대시보드 통계 숫자 갱신 (Count)
+      queryClient.invalidateQueries({ queryKey: ["member"] });
 
-  // 3. 댓글 삭제 핸들러
-  const handleCommentDelete = async (commentId: number) => {
-    if (!confirm("댓글을 삭제하시겠습니까?")) return;
+      // (3) 게시글 목록의 댓글 수 표시 갱신
+      queryClient.invalidateQueries({ queryKey: ["posts"] });
 
-    try {
+      // (4) 마이페이지의 '내 댓글 목록' 페이지 리스트 즉시 갱신
+      queryClient.invalidateQueries({ queryKey: ["comments", "my"] });
+
+      setCommentInput("");
+    },
+  });
+
+  // ✅ 3. 댓글 삭제 (Mutation)
+  const deleteMutation = useMutation({
+    mutationFn: async (commentId: number) => {
       const response = await fetch(
         `/api/community/comments?commentId=${commentId}`,
         {
           method: "DELETE",
         }
       );
+      if (!response.ok) throw new Error("삭제 실패");
+    },
+    onSuccess: () => {
+      // 삭제 시에도 동일하게 마이페이지 리스트와 숫자를 동기화합니다.
+      queryClient.invalidateQueries({ queryKey: ["comments", postId] });
+      queryClient.invalidateQueries({ queryKey: ["member"] });
+      queryClient.invalidateQueries({ queryKey: ["comments", "my"] });
+    },
+  });
 
-      if (response.ok) {
-        fetchComments();
-      } else {
-        alert("삭제 권한이 없거나 오류가 발생했습니다.");
-      }
-    } catch (error) {
-      console.error("댓글 삭제 실패:", error);
-    }
+  const handleCommentSubmit = () => {
+    if (!commentInput.trim() || !nickname || submitMutation.isPending) return;
+
+    submitMutation.mutate({
+      postId,
+      content: commentInput,
+      author: nickname,
+      authorEmail: currentUserEmail,
+      authorImage: profileImage || "/image/default-profile.png",
+    });
+  };
+
+  const handleCommentDelete = (commentId: number) => {
+    if (!confirm("댓글을 삭제하시겠습니까?")) return;
+    deleteMutation.mutate(commentId);
   };
 
   return (
@@ -118,7 +124,7 @@ export function CommentSection({
         }`}
       >
         <MessageSquare className="w-6 h-6 text-teal-500" />
-        {isDark ? "Discussion" : "Conversation"}{" "}
+        {isDark ? "Discussion" : "Conversation"}
         <span className="text-slate-300 font-light">{comments.length}</span>
       </h3>
 
@@ -152,30 +158,36 @@ export function CommentSection({
         >
           <button
             onClick={handleCommentSubmit}
-            disabled={!nickname || isSubmitting}
+            disabled={!nickname || submitMutation.isPending}
             className={`px-8 py-3 text-xs font-bold transition-all ${
               isDark
                 ? "border border-white text-white hover:bg-white hover:text-slate-900"
                 : "bg-teal-600 text-white rounded-xl hover:bg-teal-700 shadow-lg"
             } disabled:opacity-20`}
           >
-            {isSubmitting ? "Sending..." : isDark ? "Submit" : "Send Message"}
+            {submitMutation.isPending
+              ? "Sending..."
+              : isDark
+              ? "Submit"
+              : "Send Message"}
           </button>
         </div>
       </div>
 
       {/* 댓글 리스트 */}
       <div className="space-y-12">
-        {comments.length > 0 ? (
+        {isLoading ? (
+          <div className="text-center py-10 text-slate-300 animate-pulse">
+            Loading comments...
+          </div>
+        ) : comments.length > 0 ? (
           comments.map((comment, index) => (
             <div key={comment.commentId} className="flex gap-6 group relative">
-              {/* 다크모드 전용 인덱스 표시 (리뷰 페이지 스타일) */}
               {isDark && (
                 <div className="text-[10px] font-bold text-slate-200 absolute -left-12 top-1 hidden md:block">
                   {(index + 1).toString().padStart(2, "0")}
                 </div>
               )}
-
               <div className="relative w-12 h-12 rounded-full overflow-hidden bg-slate-100 shrink-0">
                 <Image
                   src={comment.authorImage || "/image/default-profile.png"}
@@ -185,7 +197,6 @@ export function CommentSection({
                   className="object-cover"
                 />
               </div>
-
               <div className="flex-1">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3">
@@ -202,7 +213,6 @@ export function CommentSection({
                       {comment.createdAt}
                     </span>
                   </div>
-
                   {comment.authorEmail === currentUserEmail && (
                     <button
                       onClick={() => handleCommentDelete(comment.commentId)}

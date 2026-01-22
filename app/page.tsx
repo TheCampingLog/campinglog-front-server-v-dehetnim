@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query"; // ✅ 추가
 import Header from "@/components/common/Header";
 import Footer from "@/components/common/Footer";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowUpRight, Plus, Compass, MoveDown, MapPin } from "lucide-react";
-import { usePostStore } from "@/features/member/store/usePostStore";
+import { ArrowUpRight, Plus, Compass, MoveDown } from "lucide-react";
 
 import { Swiper, SwiperSlide } from "swiper/react";
 import { Autoplay, EffectFade, Pagination } from "swiper/modules";
@@ -17,40 +17,45 @@ import "swiper/css/pagination";
 
 export default function HomePage() {
   const [isMount, setIsMount] = useState(false);
-  const [heroSlides, setHeroSlides] = useState<any[]>([]);
-  const [localEvents, setLocalEvents] = useState<any[]>([]);
-  const { posts, setPosts } = usePostStore();
 
   useEffect(() => {
     setIsMount(true);
-    const fetchData = async () => {
-      try {
-        const [heroRes, postRes, eventRes] = await Promise.all([
-          fetch("/api/home/hero"),
-          fetch("/api/community/posts", { cache: "no-store" }),
-          fetch("/api/home/events"),
-        ]);
-        if (heroRes.ok) setHeroSlides(await heroRes.json());
-        if (postRes.ok) setPosts(await postRes.json());
-        if (eventRes.ok) {
-          const eventData = await eventRes.json();
-          setLocalEvents(eventData.slice(0, 3));
-        }
-      } catch (error) {
-        console.error("데이터 로드 오류:", error);
-      }
-    };
-    fetchData();
-  }, [setPosts]);
+  }, []);
 
-  // ✅ 날짜 문자열(2026.03.15)에서 월/일 추출하는 함수
+  // ✅ [React Query 1] Hero 슬라이드 데이터 조회
+  const { data: heroSlides = [] } = useQuery({
+    queryKey: ["home", "hero"],
+    queryFn: () => fetch("/api/home/hero").then((res) => res.json()),
+    staleTime: 1000 * 60 * 60, // 1시간 캐싱
+  });
+
+  // ✅ [React Query 2] 전체 포스트 데이터 조회 (기존 usePostStore 대체)
+  const { data: allPosts = [] } = useQuery({
+    queryKey: ["posts", "all"],
+    queryFn: () => fetch("/api/community/posts").then((res) => res.json()),
+    staleTime: 1000 * 60 * 5, // 5분 캐싱
+  });
+
+  // ✅ [React Query 3] 로컬 이벤트 데이터 조회
+  const { data: localEvents = [] } = useQuery({
+    queryKey: ["home", "events"],
+    queryFn: () =>
+      fetch("/api/home/events")
+        .then((res) => res.json())
+        .then((data) => data.slice(0, 3)),
+    staleTime: 1000 * 60 * 30, // 30분 캐싱
+  });
+
+  // ✅ 비즈니스 로직 처리 (자바의 Service 레이어 역할)
+  const featuredCamps = allPosts
+    .filter((post: any) => post.category === "캠핑장 정보")
+    .slice(0, 3);
+
+  // 날짜 파싱 함수 (기존 동일)
   const parseEventDate = (dateStr: string) => {
     try {
-      // "2026.03.15 - 04.10" 같은 형식에서 앞부분 추출
       const startDate = dateStr.split(" - ")[0];
       const parts = startDate.split(".");
-
-      // 월 이름 매핑 (숫자를 영문 월로 변경)
       const months = [
         "JAN",
         "FEB",
@@ -67,28 +72,19 @@ export default function HomePage() {
       ];
       const monthIdx = parseInt(parts[1]) - 1;
       const day = parts[2];
-
-      return {
-        month: months[monthIdx] || "DATE",
-        day: day || "00",
-      };
+      return { month: months[monthIdx] || "DATE", day: day || "00" };
     } catch (e) {
       return { month: "EVENT", day: "!!" };
     }
   };
-
-  const featuredCamps = posts
-    .filter((post) => post.category === "캠핑장 정보")
-    .slice(0, 3);
 
   if (!isMount) return null;
 
   return (
     <div className="min-h-screen bg-white selection:bg-teal-500 selection:text-white font-sans">
       <Header />
-
       <main>
-        {/* 1. Hero Section (기존 동일) */}
+        {/* 1. Hero Section */}
         <section className="relative h-screen w-full overflow-hidden bg-slate-900">
           {heroSlides.length > 0 ? (
             <Swiper
@@ -100,7 +96,7 @@ export default function HomePage() {
               loop={true}
               className="w-full h-full"
             >
-              {heroSlides.map((slide) => (
+              {heroSlides.map((slide: any) => (
                 <SwiperSlide key={slide.id} className="relative w-full h-full">
                   <Image
                     src={slide.image}
@@ -146,7 +142,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* 2. Featured Camps Section (기존 동일) */}
+        {/* 2. Featured Camps Section */}
         <section className="max-w-7xl mx-auto px-6 py-40 bg-white">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-20 items-end mb-24">
             <div className="lg:col-span-8">
@@ -195,7 +191,7 @@ export default function HomePage() {
                 </Link>
               </div>
               <div className="lg:col-span-4 flex flex-col gap-10">
-                {featuredCamps.slice(1, 3).map((camp) => (
+                {featuredCamps.slice(1, 3).map((camp: any) => (
                   <Link
                     href={`/community/posts/${camp.postId}`}
                     key={camp.postId}
@@ -227,7 +223,7 @@ export default function HomePage() {
           )}
         </section>
 
-        {/* 3. Local Events Section: 날짜 파싱 적용 ✅ */}
+        {/* 3. Local Events Section */}
         <section className="bg-[#FBFBF9] py-40 overflow-hidden relative border-y border-slate-100">
           <div className="max-w-7xl mx-auto px-6 relative z-10">
             <div className="flex flex-col md:flex-row justify-between items-center mb-24 text-center md:text-left">
@@ -248,12 +244,9 @@ export default function HomePage() {
                 <Plus className="w-4 h-4 group-hover:rotate-90 transition-transform" />
               </Link>
             </div>
-
             <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
-              {localEvents.map((event, idx) => {
-                // ✅ 날짜 데이터에서 월/일 추출
+              {localEvents.map((event: any, idx: number) => {
                 const { month, day } = parseEventDate(event.date);
-
                 return (
                   <Link
                     key={event.id}
@@ -262,7 +255,7 @@ export default function HomePage() {
                       idx === 1 ? "md:-translate-y-12" : ""
                     } transition-all duration-700`}
                   >
-                    <div className="relative aspect-[3/4] overflow-hidden rounded-[2.5rem] mb-10 shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] bg-white">
+                    <div className="relative aspect-[3/4] overflow-hidden rounded-[2.5rem] mb-10 shadow-lg bg-white">
                       <Image
                         src={event.image}
                         alt={event.title}
@@ -270,9 +263,6 @@ export default function HomePage() {
                         sizes="(max-width: 768px) 100vw, 33vw"
                         className="object-cover transition-transform duration-1000 group-hover:scale-110"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-
-                      {/* ✅ 동적 날짜 뱃지 적용 */}
                       <div className="absolute top-8 right-8">
                         <div className="w-14 h-14 bg-white/90 backdrop-blur-md rounded-full flex flex-col items-center justify-center shadow-lg transform group-hover:rotate-12 transition-transform">
                           <span className="text-[10px] font-black text-teal-600 uppercase leading-none mb-0.5">
@@ -284,7 +274,6 @@ export default function HomePage() {
                         </div>
                       </div>
                     </div>
-
                     <div className="px-2">
                       <div className="flex items-center gap-2 mb-4">
                         <span className="text-[10px] font-black text-teal-600 uppercase tracking-widest">
@@ -308,96 +297,7 @@ export default function HomePage() {
             </div>
           </div>
         </section>
-
-        {/* 4. Brand Guide: Editorial Storytelling Section ✅ */}
-        <section className="relative py-60 bg-white overflow-hidden">
-          {/* 배경 대형 텍스트 (시각적 깊이감) */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[30vw] font-black text-slate-50 leading-none select-none italic font-serif pointer-events-none">
-            Archive
-          </div>
-
-          <div className="max-w-7xl mx-auto px-6 relative z-10">
-            <div className="flex flex-col lg:flex-row items-center gap-24 lg:gap-16">
-              {/* 좌측: 복합 이미지 레이아웃 */}
-              <div className="lg:w-1/2 relative w-full h-[600px]">
-                {/* 메인 큰 이미지 */}
-                <div className="absolute top-0 left-0 w-4/5 h-[500px] rounded-[3rem] overflow-hidden shadow-[0_50px_100px_-20px_rgba(0,0,0,0.15)] z-20 group">
-                  <Image
-                    src="/image/main-hero-3.jpg"
-                    alt="guide main"
-                    fill
-                    className="object-cover transition-transform duration-1000 group-hover:scale-110"
-                  />
-                </div>
-
-                {/* 겹쳐진 작은 이미지 (플로팅 효과) */}
-                <div className="absolute bottom-0 right-0 w-3/5 h-[350px] rounded-[3rem] overflow-hidden shadow-2xl z-30 border-[12px] border-white group">
-                  <Image
-                    src="/image/tip-banner.jpg"
-                    alt="guide detail"
-                    fill
-                    className="object-cover transition-transform duration-1000 group-hover:scale-110"
-                  />
-                </div>
-
-                {/* 인증 뱃지 (회전 애니메이션 개선) */}
-                <div className="absolute -top-10 -right-4 w-40 h-40 bg-teal-500 rounded-full flex items-center justify-center text-center text-white shadow-2xl z-40 animate-spin-slow border-4 border-white backdrop-blur-sm bg-teal-500/90">
-                  <div className="flex flex-col items-center">
-                    <span className="text-[10px] font-black tracking-[0.2em] uppercase leading-tight">
-                      Pro <br /> Camper <br /> Choice
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* 우측: 텍스트 및 콘텐츠 */}
-              <div className="lg:w-1/2 flex flex-col items-start text-left lg:pl-12">
-                <div className="flex items-center gap-4 mb-8">
-                  <span className="w-12 h-[2px] bg-teal-500" />
-                  <span className="text-teal-600 text-[11px] font-black uppercase tracking-[0.5em]">
-                    Our Philosophy
-                  </span>
-                </div>
-
-                <h3 className="text-6xl md:text-8xl font-black text-slate-900 leading-[0.85] tracking-tighter italic font-serif mb-12">
-                  Elevate <br />
-                  Your <span className="text-teal-500 not-italic">Vibe.</span>
-                </h3>
-
-                <div className="space-y-6 max-w-lg mb-16">
-                  <p className="text-xl text-slate-600 font-medium leading-relaxed italic font-serif">
-                    "캠핑은 단순히 머무는 것이 아니라, <br /> 자연과 조우하는
-                    방식의 예술입니다."
-                  </p>
-                  <p className="text-base text-slate-400 font-light leading-relaxed">
-                    우리는 당신의 아웃도어 라이프가 단순한 숙박을 넘어 하나의
-                    영감이 되길 바랍니다. 전문가들이 엄선한 장비 팁부터 숨겨진
-                    명소까지, 당신만의 완벽한 캠핑 시나리오를 완성해보세요.
-                  </p>
-                </div>
-
-                <Link
-                  href="/tips"
-                  className="group relative flex items-center gap-6"
-                >
-                  <div className="w-20 h-20 bg-slate-900 rounded-full flex items-center justify-center text-white transition-all duration-500 group-hover:bg-teal-500 group-hover:scale-110 shadow-xl">
-                    <ArrowUpRight className="w-8 h-8 transition-transform group-hover:rotate-45" />
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-1">
-                      Get Inspired
-                    </span>
-                    <span className="text-lg font-bold text-slate-900 border-b-2 border-slate-900 group-hover:text-teal-500 group-hover:border-teal-500 transition-colors">
-                      Explore Our Expert Guide
-                    </span>
-                  </div>
-                </Link>
-              </div>
-            </div>
-          </div>
-        </section>
       </main>
-
       <Footer />
 
       <style jsx global>{`

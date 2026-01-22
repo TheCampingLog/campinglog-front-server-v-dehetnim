@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useUserStore } from "@/features/member/store/useUserStore";
+import { useEffect } from "react";
 
-// 1. 타입 정의
+// 1. 타입 정의 (기존과 동일)
 interface Member {
   nickname: string;
   email: string;
@@ -11,14 +12,6 @@ interface Member {
   memberGrade: string;
   phoneNumber?: string;
   joinDate?: string;
-}
-
-interface Activity {
-  boardCount: number;
-  commentCount: number;
-  reviewCount: number;
-  likeCount: number;
-  joinDate: string;
 }
 
 interface Rank {
@@ -30,76 +23,61 @@ interface Rank {
 }
 
 export function useMemberData() {
-  const [member, setMember] = useState<Member | null>(null);
-  const [activity, setActivity] = useState<Activity | null>(null);
-  const [rank, setRank] = useState<Rank | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // ✅ 전역 스토어 액션 가져오기 (헤더/사이드바 동기화용)
   const setUserInfo = useUserStore((state) => state.setUserInfo);
 
+  // ✅ [조회 로직 1] 멤버 정보 (JPA findById 처럼 관리됨)
+  const { data: member, isLoading: isMemberLoading } = useQuery<Member>({
+    queryKey: ["member", "account"],
+    queryFn: async () => {
+      const res = await fetch("/api/members/account");
+      if (!res.ok) throw new Error("멤버 데이터 로드 실패");
+      return res.json();
+    },
+    staleTime: 1000 * 60 * 5, // 5분 동안은 '신선'하다고 간주하여 캐시 사용
+  });
+
+  // ✅ [조회 로직 2] 랭크 정보
+  const { data: rank, isLoading: isRankLoading } = useQuery<Rank>({
+    queryKey: ["member", "rank"],
+    queryFn: async () => {
+      const res = await fetch("/api/members/rank");
+      if (!res.ok) return null;
+      return res.json();
+    },
+    // 실패 시 기본값 처리를 위해 초기값(placeholder)이나 select 활용 가능
+  });
+
+  // ✅ [동기화 로직] 데이터가 로드되면 Zustand 스토어 업데이트
+  // 리액트 쿼리가 데이터를 가져오면 이 effect가 실행되어 헤더/사이드바와 동기화됩니다.
   useEffect(() => {
-    const fetchAllData = async () => {
-      try {
-        setIsLoading(true);
+    if (member) {
+      setUserInfo({
+        nickname: member.nickname,
+        profileImage: member.profileImage,
+        email: member.email,
+      });
+    }
+  }, [member, setUserInfo]);
 
-        /**
-         * ✅ 2. 실제 서버 API 호출
-         * cache: "no-store"를 통해 Next.js의 데이터 캐싱을 방지합니다.
-         */
-        const [memberRes, rankRes] = await Promise.all([
-          fetch("/api/members/account", {
-            cache: "no-store",
-            headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
-          }),
-          fetch("/api/members/rank", { cache: "no-store" }).catch(() => null),
-        ]);
+  // 로딩 상태 통합
+  const isLoading = isMemberLoading || isRankLoading;
 
-        if (!memberRes.ok) throw new Error("멤버 데이터 로드 실패");
+  // 랭크 기본값 처리 (기존 로직 유지)
+  const finalRank = rank || {
+    currentRank: "Silver",
+    totalPoints: 0,
+    nextRank: "Gold",
+    remainPoints: 1000,
+    rankImageUrl: "/image/rank-silver.png",
+  };
 
-        const memberData = await memberRes.json();
+  const activity = {
+    boardCount: 0,
+    commentCount: 0,
+    reviewCount: 0,
+    likeCount: 0,
+    joinDate: member?.joinDate || "2024-01-01",
+  };
 
-        // 3. Rank 데이터 처리 (실패 시 기본값)
-        let rankData = {
-          currentRank: "Silver",
-          totalPoints: 0,
-          nextRank: "Gold",
-          remainPoints: 1000,
-          rankImageUrl: "/image/rank-silver.png",
-        };
-
-        if (rankRes && rankRes.ok) {
-          rankData = await rankRes.json();
-        }
-
-        // ✅ 4. 상태 업데이트 (로컬 상태)
-        setMember(memberData);
-        setRank(rankData);
-        setActivity({
-          boardCount: 0,
-          commentCount: 0,
-          reviewCount: 0,
-          likeCount: 0,
-          joinDate: memberData.joinDate || "2024-01-01",
-        });
-
-        // ✅ 5. 전역 스토어(Zustand) 즉시 동기화
-        // 이 코드가 있어야 메인 페이지 진입 시 헤더의 닉네임과 사진이 바뀝니다.
-        setUserInfo({
-          nickname: memberData.nickname,
-          profileImage: memberData.profileImage,
-          email: memberData.email,
-        });
-      } catch (error) {
-        console.error("데이터 로딩 중 에러 발생:", error);
-        setMember(null);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchAllData();
-  }, [setUserInfo]); // setUserInfo를 의존성 배열에 추가
-
-  return { member, activity, rank, isLoading };
+  return { member, activity, rank: finalRank, isLoading };
 }

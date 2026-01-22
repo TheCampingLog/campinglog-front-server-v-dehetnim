@@ -1,26 +1,29 @@
 "use client";
 
+import { useState } from "react"; // ✅ 페이지 상태 관리를 위해 추가
 import Header from "@/components/common/Header";
 import Footer from "@/components/common/Footer";
 import Sidebar from "@/features/member/components/common/Sidebar";
 import Link from "next/link";
 import { Plus, ChevronLeft, ChevronRight } from "lucide-react";
 
-// ✅ 새로 만든 컴포넌트와 훅을 임포트합니다.
 import { PostCard } from "@/features/member/components/PostCard";
-import { useMyPosts } from "@/features/member/hooks/useMyPosts";
+import { useMyPosts, Post } from "@/features/member/hooks/useMyPosts";
 
 export default function MyPostsPage() {
-  // ✅ 훅을 통해 모든 상태와 로직을 한 번에 가져옵니다.
+  // ✅ 1. 현재 페이지 상태를 로컬에서 관리합니다 (Spring Data JPA의 Pageable과 매칭)
+  const [page, setPage] = useState(1);
+
+  // ✅ 2. 훅에 현재 페이지를 넘겨줍니다.
+  // 이제 page가 바뀌면 useQuery가 감지하여 자동으로 서버에서 해당 데이터를 긁어옵니다.
   const {
     posts,
     isLoading,
     currentPage,
     totalPages,
     totalElements,
-    fetchPosts,
     handleDelete,
-  } = useMyPosts();
+  } = useMyPosts(page);
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
@@ -71,21 +74,24 @@ export default function MyPostsPage() {
           ) : posts.length > 0 ? (
             <>
               <div className="space-y-4">
-                {posts.map((post) => (
-                  // ✅ 분리한 PostCard 컴포넌트를 사용합니다.
-                  <PostCard
-                    key={`post-item-${post.postId}`}
-                    post={post}
-                    onDelete={handleDelete}
-                  />
-                ))}
+                {posts.map(
+                  (
+                    post: Post // ✅ : Post 타입을 명시하여 any 에러 해결
+                  ) => (
+                    <PostCard
+                      key={`post-item-${post.postId}`}
+                      post={post}
+                      onDelete={handleDelete}
+                    />
+                  )
+                )}
               </div>
 
-              {/* 페이지네이션 컨트롤 */}
+              {/* ✅ 페이지네이션 컨트롤: fetchPosts 대신 setPage를 사용합니다. */}
               {totalPages > 1 && (
                 <div className="mt-16 flex justify-center items-center gap-4">
                   <button
-                    onClick={() => fetchPosts(currentPage - 1)}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
                     disabled={currentPage === 1}
                     className="p-2 border border-slate-100 rounded-full disabled:opacity-20 hover:bg-slate-50 transition-all"
                   >
@@ -95,7 +101,7 @@ export default function MyPostsPage() {
                     {[...Array(totalPages)].map((_, i) => (
                       <button
                         key={`page-${i + 1}`}
-                        onClick={() => fetchPosts(i + 1)}
+                        onClick={() => setPage(i + 1)}
                         className={`w-8 h-8 rounded-full text-[11px] font-black transition-all ${
                           currentPage === i + 1
                             ? "bg-slate-900 text-white"
@@ -107,7 +113,7 @@ export default function MyPostsPage() {
                     ))}
                   </div>
                   <button
-                    onClick={() => fetchPosts(currentPage + 1)}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                     disabled={currentPage === totalPages}
                     className="p-2 border border-slate-100 rounded-full disabled:opacity-20 hover:bg-slate-50 transition-all"
                   >

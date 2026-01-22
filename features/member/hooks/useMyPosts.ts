@@ -1,7 +1,8 @@
-import { useState, useCallback, useEffect } from "react";
+"use client";
+
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useUserStore } from "@/features/member/store/useUserStore";
 
-// ✅ 1. 데이터 구조를 TypeScript에게 알려줍니다.
 export interface Post {
   postId: number;
   title: string;
@@ -13,75 +14,62 @@ export interface Post {
   author: string;
 }
 
-export function useMyPosts() {
-  // ✅ 2. 빈 배열이 아니라 Post 객체들이 들어올 배열임을 명시합니다 <Post[]>
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [meta, setMeta] = useState({
-    currentPage: 1,
-    totalPages: 0,
-    totalElements: 0,
-  });
+export function useMyPosts(page: number = 1) {
+  const queryClient = useQueryClient(); // ✅ 스프링의 CacheManager/EntityManager 역할
   const { email } = useUserStore();
 
-  const fetchPosts = useCallback(async (page: number) => {
-    try {
-      setIsLoading(true);
-      const res = await fetch(`/api/members/posts?page=${page}`, {
-        cache: "no-store", // 최신 데이터 보장
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setPosts(data.content || []);
-        setMeta({
-          totalPages: data.totalPages || 0,
-          totalElements: data.totalElements || 0,
-          currentPage: data.number || 1,
-        });
-      }
-    } catch (error) {
-      console.error("게시글 로드 실패:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  // ✅ 1. 조회 (JPA findByEmail + Paging 역할)
+  const { data, isLoading } = useQuery({
+    // 키에 page를 포함하여 페이지별로 캐싱됩니다.
+    queryKey: ["posts", "my", email, page],
+    queryFn: async () => {
+      const res = await fetch(`/api/members/posts?page=${page}`);
+      if (!res.ok) throw new Error("게시글 로드 실패");
+      return res.json();
+    },
+    enabled: !!email, // 이메일이 있을 때만 쿼리 실행
+    staleTime: 1000 * 60, // 1분간 캐시 유지
+  });
 
-  const handleDelete = async (e: React.MouseEvent, postId: number) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (!confirm("삭제하시겠습니까?")) return;
-
-    try {
+  // ✅ 2. 삭제 (자바의 @Modifying 쿼리 역할)
+  const deleteMutation = useMutation({
+    mutationFn: async (postId: number) => {
       const res = await fetch(`/api/community/posts/${postId}`, {
         method: "DELETE",
       });
+      if (!res.ok) throw new Error("삭제 중 오류가 발생했습니다.");
+      return res.json();
+    },
+    onSuccess: () => {
+      alert("삭제되었습니다.");
 
-      if (res.ok) {
-        alert("삭제되었습니다.");
+      /**
+       * ✅ [트랜잭션 후처리] 캐시 무효화 (Invalidation)
+       * 1. '내 게시글 목록' 캐시를 무효화하여 현재 페이지를 다시 불러옵니다.
+       * 2. '활동 요약(activity)' 캐시도 무효화하여 대시보드 숫자를 갱신합니다.
+       */
+      queryClient.invalidateQueries({ queryKey: ["posts", "my"] });
+      queryClient.invalidateQueries({ queryKey: ["member", "activity"] });
+    },
+    onError: (error: any) => {
+      alert(error.message);
+    },
+  });
 
-        // ✅ 삭제 후 페이지 이동 로직 최적화
-        // 현재 페이지에 글이 하나뿐이고, 그게 1페이지가 아니라면 이전 페이지로 이동
-        setPosts((prevPosts) => {
-          const isLastItem = prevPosts.length === 1 && meta.currentPage > 1;
-          const targetPage = isLastItem
-            ? meta.currentPage - 1
-            : meta.currentPage;
-          fetchPosts(targetPage);
-          return prevPosts; // 실제 배열 교체는 fetchPosts가 다시 수행함
-        });
-      } else {
-        const errorData = await res.json();
-        alert(errorData.message || "삭제 권한이 없거나 오류가 발생했습니다.");
-      }
-    } catch (error) {
-      console.error("삭제 요청 중 오류:", error);
+  const handleDelete = (e: React.MouseEvent, postId: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (confirm("삭제하시겠습니까?")) {
+      deleteMutation.mutate(postId);
     }
   };
 
-  useEffect(() => {
-    if (email) fetchPosts(1);
-  }, [email, fetchPosts]);
-
-  return { posts, isLoading, ...meta, fetchPosts, handleDelete };
+  return {
+    posts: data?.content || [],
+    isLoading,
+    totalPages: data?.totalPages || 0,
+    totalElements: data?.totalElements || 0,
+    currentPage: data?.number || 1,
+    handleDelete,
+  };
 }

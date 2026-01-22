@@ -49,13 +49,17 @@ export default function MemberCommentsPage() {
             </div>
           ) : comments.length > 0 ? (
             <div className="space-y-6">
-              {comments.map((comment) => (
-                <CommentCard
-                  key={comment.commentId}
-                  comment={comment}
-                  onDelete={handleDelete}
-                />
-              ))}
+              {comments.map(
+                (
+                  comment: any // 👈 여기 : any 추가
+                ) => (
+                  <CommentCard
+                    key={comment.commentId}
+                    comment={comment}
+                    onDelete={handleDelete}
+                  />
+                )
+              )}
             </div>
           ) : (
             <div className="py-40 text-center bg-slate-50 rounded-[3rem] border border-dashed border-slate-200">

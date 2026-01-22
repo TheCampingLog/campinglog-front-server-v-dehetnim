@@ -1,93 +1,82 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import fs from "fs";
+import fs from "fs/promises"; // ✅ 1. 비동기 I/O 모듈로 교체
 import path from "path";
 
 const dataPath = path.join(process.cwd(), "data", "users.json");
 
 /**
- * ✅ 1. GET: 현재 로그인한 유저 정보 가져오기
+ * ✅ 1. GET: 로그인한 유저의 프로필 정보 가져오기
  */
 export async function GET() {
   try {
-    // Next.js 15 필수: cookies() 앞에 await를 붙여야 get()을 쓸 수 있습니다.
     const cookieStore = await cookies();
-    const email = cookieStore.get("user_email")?.value;
+    const userEmail = cookieStore.get("user_email")?.value;
 
-    if (!email) {
-      return NextResponse.json(
-        { error: "로그인이 필요합니다." },
-        { status: 401 }
-      );
-    }
+    if (!userEmail)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const fileData = fs.readFileSync(dataPath, "utf8");
+    // ✅ 2. 비동기식 파일 읽기 (자바의 Async I/O)
+    const fileData = await fs.readFile(dataPath, "utf8");
     const users = JSON.parse(fileData);
 
-    // 내 이메일과 일치하는 유저 찾기
-    const user = users.find((u: any) => u.email === email);
+    const currentUser = users.find((u: any) => u.email === userEmail);
+    if (!currentUser)
+      return NextResponse.json({ error: "Not Found" }, { status: 404 });
 
-    if (!user) {
-      return NextResponse.json(
-        { error: "유저를 찾을 수 없습니다." },
-        { status: 404 }
-      );
-    }
+    const { password, ...userWithoutPassword } = currentUser;
 
-    // 비밀번호 제외하고 반환
-    const { password, ...safeUser } = user;
-    return NextResponse.json(safeUser, {
+    return NextResponse.json(userWithoutPassword, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
-    return NextResponse.json({ error: "정보 로드 실패" }, { status: 500 });
+    return NextResponse.json({ error: "Server Error" }, { status: 500 });
   }
 }
 
 /**
- * ✅ 2. PUT: 현재 로그인한 유저 정보 수정하기
+ * ✅ 2. PUT: 로그인한 유저의 정보 수정하기
  */
 export async function PUT(request: Request) {
   try {
     const cookieStore = await cookies();
-    const email = cookieStore.get("user_email")?.value;
+    const userEmail = cookieStore.get("user_email")?.value;
 
-    if (!email) {
-      return NextResponse.json(
-        { error: "수정 권한이 없습니다." },
-        { status: 401 }
-      );
-    }
+    if (!userEmail)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = await request.json(); // 프론트에서 보낸 수정 데이터 (nickname, profileImage 등)
-    const fileData = fs.readFileSync(dataPath, "utf8");
+    const body = await request.json();
+    const fileData = await fs.readFile(dataPath, "utf8"); // ✅ 비동기 처리
     let users = JSON.parse(fileData);
 
-    // 내 이메일이 위치한 인덱스 찾기
-    const userIndex = users.findIndex((u: any) => u.email === email);
+    const userIndex = users.findIndex((u: any) => u.email === userEmail);
+    if (userIndex === -1)
+      return NextResponse.json({ error: "Not Found" }, { status: 404 });
 
-    if (userIndex === -1) {
-      return NextResponse.json(
-        { error: "유저를 찾을 수 없습니다." },
-        { status: 404 }
-      );
-    }
+    // ✅ 3. 필드 화이트리스트 적용 (자바의 DTO 매핑과 유사)
+    // body에서 필요한 것만 꺼내서 덮어씁니다.
+    const { nickname, profileImage, phoneNumber } = body;
 
-    // ✅ 기존 유저 데이터에 새로운 데이터를 덮어쓰기 (이메일은 변경 방지)
     users[userIndex] = {
       ...users[userIndex],
-      ...body,
-      email: email, // 이메일은 절대 변하지 않도록 강제 고정
+      nickname: nickname ?? users[userIndex].nickname,
+      profileImage: profileImage ?? users[userIndex].profileImage,
+      phoneNumber: phoneNumber ?? users[userIndex].phoneNumber,
+      email: userEmail, // PK 역할인 이메일은 변조 방지
     };
 
-    // 파일에 저장
-    fs.writeFileSync(dataPath, JSON.stringify(users, null, 2), "utf8");
+    // ✅ 4. 비동기 파일 쓰기 및 용량 최적화 (Indent 제거)
+    await fs.writeFile(dataPath, JSON.stringify(users), "utf8");
 
-    // 수정된 최신 정보 반환 (패스워드 제외)
-    const { password, ...updatedUser } = users[userIndex];
-    return NextResponse.json({ success: true, user: updatedUser });
+    return NextResponse.json({
+      success: true,
+      user: {
+        nickname: users[userIndex].nickname,
+        profileImage: users[userIndex].profileImage,
+      },
+    });
   } catch (error) {
-    console.error("수정 오류:", error);
-    return NextResponse.json({ error: "정보 수정 실패" }, { status: 500 });
+    console.error("Profile update error:", error);
+    return NextResponse.json({ error: "Update Failed" }, { status: 500 });
   }
 }

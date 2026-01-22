@@ -1,62 +1,56 @@
 [
   {
-    "postId": 1768676299957,
+    "postId": 1768971233166,
     "nickname": "dehetnim",
     "email": "dehetnim@gmail.com",
-    "createdAt": "2026-01-17T18:59:44.837Z"
+    "createdAt": "2026-01-21T06:09:43.595Z"
   },
   {
-    "postId": 1768674926769,
+    "postId": 1768971278714,
     "nickname": "dehetnim",
     "email": "dehetnim@gmail.com",
-    "createdAt": "2026-01-17T18:39:14.953Z"
+    "createdAt": "2026-01-21T04:54:55.311Z"
   },
   {
-    "postId": 1768672689648,
-    "nickname": "a",
-    "email": "a@a.com",
-    "createdAt": "2026-01-17T18:34:08.523Z"
-  },
-  {
-    "postId": 1768672689648,
+    "postId": 1705842100000,
     "nickname": "dehetnim",
     "email": "dehetnim@gmail.com",
-    "createdAt": "2026-01-17T17:58:23.258Z"
+    "createdAt": "2026-01-21T04:52:50.658Z"
   },
   {
-    "postId": 1736841600001,
+    "postId": 1705842200000,
     "nickname": "dehetnim",
     "email": "dehetnim@gmail.com",
-    "createdAt": "2026-01-17T17:37:59.471Z"
+    "createdAt": "2026-01-21T04:52:39.934Z"
   },
   {
-    "postId": 1736841600002,
+    "postId": 1705842000000,
     "nickname": "dehetnim",
     "email": "dehetnim@gmail.com",
-    "createdAt": "2026-01-17T17:37:54.827Z"
+    "createdAt": "2026-01-21T04:52:19.421Z"
   },
   {
-    "postId": 1768668999054,
-    "nickname": "dehetnim",
-    "email": "dehetnim@gmail.com",
-    "createdAt": "2026-01-17T17:37:40.900Z"
+    "postId": 1705842000000,
+    "nickname": "차박러",
+    "email": "carcamp@example.com",
+    "createdAt": "2026.01.21T05:30:00.000Z"
   },
   {
-    "postId": 1768669450712,
-    "nickname": "dehetnim",
-    "email": "dehetnim@gmail.com",
-    "createdAt": "2026-01-17T17:04:22.750Z"
+    "postId": 1705842000000,
+    "nickname": "beginner_user",
+    "email": "test@test.com",
+    "createdAt": "2026.01.21T06:00:00.000Z"
   },
   {
-    "postId": 4,
-    "nickname": "dehetnim",
-    "email": "dehetnim@gmail.com",
-    "createdAt": "2026-01-17T16:05:53.751Z"
+    "postId": 1705842100000,
+    "nickname": "캠린이탈출",
+    "email": "beginner@example.com",
+    "createdAt": "2026.01.21T07:15:00.000Z"
   },
   {
-    "postId": 1,
-    "nickname": "dehetnim",
-    "email": "dehetnim@gmail.com",
-    "createdAt": "2026-01-14T17:51:31.184Z"
+    "postId": 1705842200000,
+    "nickname": "beginner_user",
+    "email": "test@test.com",
+    "createdAt": "2026.01.20T10:45:00.000Z"
   }
 ]

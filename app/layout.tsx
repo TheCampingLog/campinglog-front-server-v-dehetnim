@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+// ✅ 1. 방금 만든 Provider 임포트
+import ReactQueryProvider from "@/components/providers/ReactQueryProvider";
+import { UserInitializer } from "@/features/member/components/UserInitializer";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,7 +30,11 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        {/* ✅ 2. Provider로 자식 컴포넌트들을 감싸줍니다. */}
+        <ReactQueryProvider>
+          <UserInitializer /> {/* 👈 앱이 켜지면 배경에서 데이터 싱크 시작 */}
+          {children}
+        </ReactQueryProvider>
       </body>
     </html>
   );

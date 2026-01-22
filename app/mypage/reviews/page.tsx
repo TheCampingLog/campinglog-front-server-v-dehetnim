@@ -1,26 +1,29 @@
 "use client";
 
+import { useState } from "react"; // ✅ 페이지 상태 관리를 위해 추가
 import Header from "@/components/common/Header";
 import Footer from "@/components/common/Footer";
 import Sidebar from "@/features/member/components/common/Sidebar";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 
-// ✅ 분리한 컴포넌트와 훅을 임포트합니다.
 import { ReviewCard } from "@/features/member/components/ReviewCard";
 import { useMyReviews } from "@/features/member/hooks/useMyReviews";
 
 export default function MemberReviewsPage() {
-  // ✅ 커스텀 훅을 통해 리뷰 데이터와 제어 로직을 가져옵니다.
+  // ✅ 1. 현재 페이지 상태를 로컬에서 관리합니다. (Spring Data JPA의 Pageable 파라미터 역할)
+  const [page, setPage] = useState(1);
+
+  // ✅ 2. 리팩토링한 React Query 기반 훅에 page 상태를 전달합니다.
+  // 이제 setPage(2)가 실행되면 useMyReviews가 감지하여 자동으로 2페이지 데이터를 Fetch합니다.
   const {
     reviews,
     isLoading,
     currentPage,
     totalPages,
     totalElements,
-    fetchReviews,
     handleDelete,
-  } = useMyReviews();
+  } = useMyReviews(page);
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
@@ -68,8 +71,7 @@ export default function MemberReviewsPage() {
           ) : reviews.length > 0 ? (
             <>
               <div className="grid grid-cols-1 gap-8">
-                {reviews.map((review) => (
-                  // ✅ 분리한 ReviewCard 컴포넌트에 데이터와 삭제 함수를 전달합니다.
+                {reviews.map((review: any) => (
                   <ReviewCard
                     key={`review-${review.postId}`}
                     review={review}
@@ -78,11 +80,11 @@ export default function MemberReviewsPage() {
                 ))}
               </div>
 
-              {/* 페이지네이션 버튼 */}
+              {/* ✅ 페이지네이션: fetchReviews(i) 대신 setPage(i)를 호출합니다. */}
               {totalPages > 1 && (
                 <div className="mt-16 flex justify-center items-center gap-4">
                   <button
-                    onClick={() => fetchReviews(currentPage - 1)}
+                    onClick={() => setPage((prev) => Math.max(1, prev - 1))}
                     disabled={currentPage === 1}
                     className="p-2 border border-slate-100 rounded-full disabled:opacity-20 hover:bg-slate-50 transition-all"
                   >
@@ -92,7 +94,7 @@ export default function MemberReviewsPage() {
                     {[...Array(totalPages)].map((_, i) => (
                       <button
                         key={i}
-                        onClick={() => fetchReviews(i + 1)}
+                        onClick={() => setPage(i + 1)}
                         className={`w-8 h-8 rounded-full text-[11px] font-black transition-all ${
                           currentPage === i + 1
                             ? "bg-slate-900 text-white"
@@ -104,7 +106,9 @@ export default function MemberReviewsPage() {
                     ))}
                   </div>
                   <button
-                    onClick={() => fetchReviews(currentPage + 1)}
+                    onClick={() =>
+                      setPage((prev) => Math.min(totalPages, prev + 1))
+                    }
                     disabled={currentPage === totalPages}
                     className="p-2 border border-slate-100 rounded-full disabled:opacity-20 hover:bg-slate-50 transition-all"
                   >
@@ -123,7 +127,7 @@ export default function MemberReviewsPage() {
                 href="/community?tab=캠핑장비%20리뷰"
                 className="inline-flex items-center gap-3 px-8 py-3 bg-slate-900 text-white rounded-full text-xs font-black uppercase tracking-widest hover:bg-teal-600 transition-all shadow-xl shadow-slate-200"
               >
-                Go to Review Gear
+                <Plus className="w-4 h-4 mr-2" /> Go to Review Gear
               </Link>
             </div>
           )}

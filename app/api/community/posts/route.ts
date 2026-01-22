@@ -1,33 +1,33 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
+import fs from "fs/promises";
 import path from "path";
 import { cookies } from "next/headers";
 
 const postsPath = path.join(process.cwd(), "data", "posts.json");
 const usersPath = path.join(process.cwd(), "data", "users.json");
 
-// 헬퍼: 파일 읽기
-const readData = (filePath: string) => {
-  if (!fs.existsSync(filePath)) return [];
+// 헬퍼: 파일 읽기 (비동기 방식)
+const readData = async (filePath: string) => {
   try {
-    const data = fs.readFileSync(filePath, "utf8");
-    if (!data.trim()) return []; // 파일이 비어있는 경우 빈 배열 반환
+    const data = await fs.readFile(filePath, "utf8");
+    if (!data.trim()) return [];
     return JSON.parse(data);
   } catch (err) {
-    console.error(`File read error at ${filePath}:`, err);
     return [];
   }
 };
 
-// 헬퍼: 파일 쓰기
-const writeData = (filePath: string, data: any[]) => {
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
+// 🚀 최적화된 파일 쓰기: Indent(공백)를 제거하여 I/O 속도 향상
+const writeData = async (filePath: string, data: any[]) => {
+  // null, 2를 제거하여 파일 크기를 최소화합니다.
+  await fs.writeFile(filePath, JSON.stringify(data), "utf8");
 };
 
 // [GET] 모든 게시글 가져오기
 export async function GET() {
   try {
-    const posts = readData(postsPath);
+    const posts = await readData(postsPath);
+    // 자바의 Comparator처럼 정렬
     const sortedPosts = posts.sort((a: any, b: any) => b.postId - a.postId);
     return NextResponse.json(sortedPosts);
   } catch (error) {
@@ -48,29 +48,46 @@ export async function POST(request: Request) {
       );
     }
 
-    const posts = readData(postsPath);
-    const users = readData(usersPath);
+    // 1. 데이터 병렬 로드
+    const [posts, users] = await Promise.all([
+      readData(postsPath),
+      readData(usersPath),
+    ]);
+
     const body = await request.json();
+    const { title, content, category, author, image, rating } = body;
 
-    // ✅ 클라이언트에서 보낸 authorImage를 구조분해할당으로 받습니다.
-    const { title, content, category, author, authorImage, image, rating } =
-      body;
+    // ✅ 2. 중복 등록 방지 (사용자 연타 방어)
+    const now = Date.now();
+    const isDuplicate = posts.some(
+      (p: any) =>
+        p.authorEmail === userEmail &&
+        p.title === title &&
+        now - p.postId < 3000 // 3초 이내 중복 등록 차단
+    );
 
-    // 현재 작성 유저의 최신 프로필 이미지를 서버 데이터(users.json)에서 한 번 더 확인 (보안 및 정확성)
+    if (isDuplicate) {
+      return NextResponse.json(
+        { success: false, message: "이전 요청이 처리 중입니다." },
+        { status: 429 }
+      );
+    }
+
+    // ✅ 3. 이미지 최적화: authorImage를 클라이언트로부터 받지 않고 서버 유저 데이터에서 추출
+    // 이를 통해 고용량 Base64 데이터가 JSON에 중복 저장되는 것을 원천 차단합니다.
     const currentUser = users.find((u: any) => u.email === userEmail);
     const finalAuthorImage =
-      currentUser?.profileImage || authorImage || "/image/default-profile.png";
+      currentUser?.profileImage || "/image/default-profile.png";
 
-    // 2. 새 게시글 객체 생성
     const newPost = {
-      postId: Date.now(),
+      postId: now,
       title,
       content,
       category,
-      author, // 닉네임
-      authorImage: finalAuthorImage, // ✅ 여기에 프로필 이미지 경로가 저장됩니다.
+      author,
+      authorImage: finalAuthorImage, // ✅ URL 경로만 저장됨
       authorEmail: userEmail,
-      image: image || null,
+      image: image || null, // 이미 URL 형태임을 확인
       rating: category === "캠핑장비 리뷰" ? rating : undefined,
       createdAt: new Date()
         .toLocaleDateString("ko-KR")
@@ -81,31 +98,30 @@ export async function POST(request: Request) {
       likeCount: 0,
     };
 
-    // 3. 게시글 저장
-    const updatedPosts = [newPost, ...posts];
-    writeData(postsPath, updatedPosts);
-
     // 4. 유저 활동 데이터 업데이트
     const userIndex = users.findIndex((u: any) => u.email === userEmail);
-
     if (userIndex !== -1) {
-      if (!users[userIndex].activity) {
-        users[userIndex].activity = {
+      const user = users[userIndex];
+      if (!user.activity) {
+        user.activity = {
           boardCount: 0,
           commentCount: 0,
           reviewCount: 0,
           likeCount: 0,
         };
       }
-
-      users[userIndex].activity.boardCount += 1;
-
+      user.activity.boardCount += 1;
       if (category === "캠핑장비 리뷰") {
-        users[userIndex].activity.reviewCount += 1;
+        user.activity.reviewCount += 1;
       }
-
-      writeData(usersPath, users);
     }
+
+    // 5. 병렬 쓰기 수행
+    const updatedPosts = [newPost, ...posts];
+    await Promise.all([
+      writeData(postsPath, updatedPosts),
+      writeData(usersPath, users),
+    ]);
 
     return NextResponse.json({
       success: true,

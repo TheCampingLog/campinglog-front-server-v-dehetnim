@@ -4,8 +4,10 @@ import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Search, X, ChevronDown, LogIn } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useUserStore } from "@/features/member/store/useUserStore";
 import { useLikeStore } from "@/features/member/store/useLikeStore";
+import { useMemberData } from "@/features/member/hooks/useMemberData";
 
 export default function Header() {
   const [isScrolled, setIsScrolled] = useState(false);
@@ -13,52 +15,45 @@ export default function Header() {
   const [isCommunityHovered, setIsCommunityHovered] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
-  // Zustand 상태 및 함수
-  const { nickname, profileImage, email, clearUser } = useUserStore();
-  const { syncWithServer, clearLikes } = useLikeStore();
+  const queryClient = useQueryClient();
+
+  // ✅ 1. 데이터 구독: UI는 React Query가 관리하는 캐시 상태를 바라봅니다.
+  const { member } = useMemberData();
+  const { email, clearUser } = useUserStore();
+  const { clearLikes } = useLikeStore();
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  // 로그인 상태일 때 서버와 좋아요 데이터 동기화
-  useEffect(() => {
-    const fetchAndSyncLikes = async () => {
-      if (!email || !isMounted) return;
+  /**
+   * 💡 기존에 있던 fetchAndSyncLikes 로직(useEffect)은
+   * UserInitializer 컴포넌트로 이관되었으므로 여기서 삭제되었습니다.
+   * 이제 헤더가 렌더링될 때 불필요한 API 호출을 하지 않습니다.
+   */
 
-      try {
-        const res = await fetch("/api/members/likes");
-        if (res.ok) {
-          const likedPostsData = await res.json();
-          syncWithServer(likedPostsData);
-        }
-      } catch (err) {
-        console.error("좋아요 동기화 중 오류 발생:", err);
-      }
-    };
-
-    fetchAndSyncLikes();
-  }, [email, isMounted, syncWithServer]);
-
-  // ✅ 최적화된 로그아웃 핸들러
+  /**
+   * ✅ 2. 로그아웃 핸들러
+   * 세션 종료 시 모든 보안 컨텍스트(Query Cache)를 클리어합니다.
+   */
   const handleLogout = async () => {
     if (!confirm("정말 로그아웃 하시겠습니까?")) return;
 
     try {
-      // 1. 서버 측 쿠키 삭제 API 호출
       const res = await fetch("/api/auth/logout", { method: "POST" });
-
       if (res.ok) {
-        // 2. 클라이언트 상태(Zustand) 소거
+        // 전역 상태(Zustand) 초기화
         clearUser();
         clearLikes();
 
-        // 3. 로컬 스토리지에 저장된 Persist 데이터 강제 삭제 (보안 강화)
-        localStorage.clear();
+        // 🚀 React Query 전역 캐시 소거 (이전 유저 데이터 유출 방지)
+        queryClient.clear();
+
+        if (typeof window !== "undefined") {
+          localStorage.removeItem("user-storage");
+        }
 
         alert("로그아웃 되었습니다.");
-
-        // 4. 모든 상태를 초기화하며 홈으로 강제 이동
         window.location.replace("/");
       }
     } catch (error) {
@@ -66,23 +61,25 @@ export default function Header() {
       alert("로그아웃 처리 중 오류가 발생했습니다.");
     }
   };
-  // 스크롤 제어
+
+  // 스크롤 및 검색창 제어 로직
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // 검색창 열릴 때 스크롤 방지
   useEffect(() => {
-    document.body.style.overflow = isSearchOpen ? "hidden" : "unset";
+    if (typeof document !== "undefined") {
+      document.body.style.overflow = isSearchOpen ? "hidden" : "unset";
+    }
   }, [isSearchOpen]);
 
   if (!isMounted) return null;
 
   return (
     <>
-      {/* 검색창 배경 오버레이 */}
+      {/* 배경 오버레이 */}
       <div
         className={`fixed inset-0 bg-slate-900/20 backdrop-blur-[1px] z-40 transition-opacity duration-300 ${
           isSearchOpen ? "opacity-100" : "opacity-0 pointer-events-none"
@@ -98,7 +95,6 @@ export default function Header() {
         >
           <div className="max-w-6xl mx-auto px-6 h-full flex items-center justify-between">
             <div className="flex items-center gap-12 h-full">
-              {/* 로고 영역 */}
               <Link
                 href="/"
                 className="flex items-center hover:opacity-80 transition-opacity"
@@ -119,12 +115,10 @@ export default function Header() {
                 </div>
               </Link>
 
-              {/* 네비게이션 */}
               <nav className="hidden lg:flex items-center gap-10 text-[13px] font-bold text-slate-500 tracking-tight h-full">
-                {/* 🏕️ 캠핑장 메뉴 추가 */}
                 <Link
                   href="/camping"
-                  className="hover:text-slate-900 transition-colors flex items-center gap-1"
+                  className="hover:text-slate-900 transition-colors"
                 >
                   캠핑장
                 </Link>
@@ -136,18 +130,17 @@ export default function Header() {
                 >
                   <Link
                     href="/community"
-                    className="flex items-center gap-1 hover:text-slate-900 transition-colors py-2"
+                    className="flex items-center gap-1 hover:text-slate-900 transition-colors"
                   >
                     커뮤니티
                     <ChevronDown
-                      className={`w-3.5 h-3.5 transition-transform duration-300 ${
+                      className={`w-3.5 h-3.5 transition-transform ${
                         isCommunityHovered ? "rotate-180" : ""
                       }`}
                     />
                   </Link>
-                  {/* 드롭다운 메뉴 */}
                   <div
-                    className={`absolute top-full left-0 w-40 bg-white border border-slate-100 shadow-xl rounded-sm py-2 transition-all duration-300 z-50 ${
+                    className={`absolute top-full left-0 w-40 bg-white border border-slate-100 shadow-xl rounded-sm py-2 transition-all ${
                       isCommunityHovered
                         ? "opacity-100 translate-y-0"
                         : "opacity-0 -translate-y-2 pointer-events-none"
@@ -155,18 +148,19 @@ export default function Header() {
                   >
                     <Link
                       href="/community?tab=캠핑장 정보"
-                      className="block px-5 py-2.5 text-slate-500 hover:text-slate-900 hover:bg-slate-50 transition-all font-medium text-[12px]"
+                      className="block px-5 py-2.5 text-slate-500 hover:text-slate-900 hover:bg-slate-50 transition-all text-[12px]"
                     >
                       캠핑장 정보
                     </Link>
                     <Link
                       href="/community?tab=캠핑장비 리뷰"
-                      className="block px-5 py-2.5 text-slate-500 hover:text-slate-900 hover:bg-slate-50 transition-all font-medium text-[12px]"
+                      className="block px-5 py-2.5 text-slate-500 hover:text-slate-900 hover:bg-slate-50 transition-all text-[12px]"
                     >
                       캠핑장비 리뷰
                     </Link>
                   </div>
                 </div>
+
                 <Link
                   href="/localevents"
                   className="hover:text-slate-900 transition-colors"
@@ -183,7 +177,6 @@ export default function Header() {
             </div>
 
             <div className="flex items-center gap-6">
-              {/* 검색 버튼 */}
               <button
                 onClick={() => setIsSearchOpen(!isSearchOpen)}
                 className={`p-2 transition-colors ${
@@ -199,9 +192,8 @@ export default function Header() {
                 )}
               </button>
 
-              {/* 인증 정보 영역 */}
               <div className="flex items-center gap-4">
-                {email ? (
+                {email && member ? (
                   <>
                     <Link
                       href="/mypage"
@@ -215,22 +207,23 @@ export default function Header() {
                         }`}
                       >
                         <Image
-                          src={profileImage || "/image/default-profile.png"}
+                          src={
+                            member.profileImage || "/image/default-profile.png"
+                          }
                           alt="Profile"
                           fill
-                          // ✅ 성능 최적화를 위해 sizes 추가
                           sizes="32px"
                           className="object-cover"
-                          unoptimized={profileImage?.startsWith("data:")}
+                          unoptimized={member.profileImage?.startsWith("data:")}
                         />
                       </div>
                       <span className="text-[11px] font-bold text-slate-600">
-                        {nickname}
+                        {member.nickname}
                       </span>
                     </Link>
                     <button
-                      className="hidden sm:block text-[10px] font-black text-slate-300 hover:text-red-500 transition-colors uppercase tracking-widest"
                       onClick={handleLogout}
+                      className="hidden sm:block text-[10px] font-black text-slate-300 hover:text-red-500 transition-colors uppercase tracking-widest"
                     >
                       Logout
                     </button>
@@ -251,7 +244,6 @@ export default function Header() {
           </div>
         </header>
 
-        {/* 검색창 내부 */}
         <div
           className={`w-full bg-white border-b border-slate-100 overflow-hidden transition-all duration-500 ease-in-out ${
             isSearchOpen

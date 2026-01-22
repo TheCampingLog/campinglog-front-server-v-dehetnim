@@ -1,67 +1,75 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
+import fs from "fs/promises"; // ✅ 비동기 처리
 import path from "path";
 
 const postsPath = path.join(process.cwd(), "data", "posts.json");
 const commentsPath = path.join(process.cwd(), "data", "comments.json");
 const likesPath = path.join(process.cwd(), "data", "likes.json");
 
-const readData = (p: string) =>
-  fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, "utf8")) : [];
+// 헬퍼 함수
+const readJson = async (p: string) => {
+  try {
+    const data = await fs.readFile(p, "utf8");
+    return data ? JSON.parse(data) : [];
+  } catch {
+    return [];
+  }
+};
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const nickname = searchParams.get("nickname")?.toLowerCase();
+    const email = searchParams.get("email")?.toLowerCase();
 
-    if (!nickname)
-      return NextResponse.json({ error: "Nickname required" }, { status: 400 });
-
-    const allPosts = readData(postsPath);
-    const allComments = readData(commentsPath);
-    let allLikes = readData(likesPath); // let으로 선언하여 수정 가능하게 함
-
-    // 1. 실제 존재하는 게시글 ID 목록 (Set으로 만들어 검색 속도 향상)
-    const validPostIds = new Set(allPosts.map((p: any) => p.postId));
-
-    // 2. [청소 로직] 실제 존재하는 게시글의 좋아요만 남기기
-    const cleanedLikes = allLikes.filter((l: any) =>
-      validPostIds.has(Number(l.postId))
-    );
-
-    // 3. 만약 유령 데이터가 있었다면 (개수가 다르다면) 파일에 덮어쓰기
-    if (allLikes.length !== cleanedLikes.length) {
-      fs.writeFileSync(
-        likesPath,
-        JSON.stringify(cleanedLikes, null, 2),
-        "utf8"
-      );
-      allLikes = cleanedLikes; // 메모리상의 데이터도 업데이트
-      console.log(
-        `✅ 유령 데이터 ${
-          allLikes.length - cleanedLikes.length
-        }개를 삭제했습니다.`
-      );
+    if (!email) {
+      return NextResponse.json({ error: "Email is required" }, { status: 400 });
     }
 
-    // 4. 활동량 계산 (이제 cleanedLikes 기준으로 계산됨)
+    // 🚀 데이터 병렬 로드 (성능 최적화)
+    const [allPosts, allComments, allLikes] = await Promise.all([
+      readJson(postsPath),
+      readJson(commentsPath),
+      readJson(likesPath),
+    ]);
+
+    // 1. 유효한(삭제되지 않은) 게시글 ID Set 생성
+    // 자바의 HashSet과 유사하게 O(1) 검색 속도를 보장합니다.
+    const validPostIds = new Set(allPosts.map((p: any) => Number(p.postId)));
+
+    // 2. 내 게시글 필터링
     const myPosts = allPosts.filter(
-      (p: any) => p.author?.toLowerCase() === nickname
+      (p: any) => p.authorEmail?.toLowerCase() === email
     );
 
+    // 🚀 3. 활동량 계산 (참조 무결성 로직 적용)
     const activity = {
+      // 일반 게시글 수
       posts: myPosts.filter((p: any) => p.category !== "캠핑장비 리뷰").length,
+
+      // 리뷰 게시글 수
       reviews: myPosts.filter((p: any) => p.category === "캠핑장비 리뷰")
         .length,
+
+      // ✅ 댓글 수 (핵심 수정): 내 댓글이면서 + 원문 게시글이 존재하는 경우만 카운트!
+      // 이 로직이 들어가야 마이페이지 리스트(3개)와 대시보드(3개)가 일치하게 됩니다.
       comments: allComments.filter(
-        (c: any) => c.author?.toLowerCase() === nickname
+        (c: any) =>
+          c.authorEmail?.toLowerCase() === email &&
+          validPostIds.has(Number(c.postId))
       ).length,
-      likes: allLikes.filter((l: any) => l.nickname?.toLowerCase() === nickname)
-        .length,
+
+      // 좋아요 수 (마찬가지로 게시글이 존재하는 경우만)
+      likes: allLikes.filter(
+        (l: any) =>
+          (l.email?.toLowerCase() === email ||
+            l.nickname?.toLowerCase() === email) &&
+          validPostIds.has(Number(l.postId))
+      ).length,
     };
 
     return NextResponse.json(activity);
   } catch (error) {
+    console.error("Activity API Error:", error);
     return NextResponse.json({ posts: 0, reviews: 0, comments: 0, likes: 0 });
   }
 }

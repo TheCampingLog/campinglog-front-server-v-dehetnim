@@ -1,62 +1,20 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
 import Header from "@/components/common/Header";
 import Footer from "@/components/common/Footer";
 import Sidebar from "@/features/member/components/common/Sidebar";
 import Image from "next/image";
 import Link from "next/link";
 import { Heart, Eye, Sparkles, ArrowUpRight } from "lucide-react";
-import { useUserStore } from "@/features/member/store/useUserStore";
-
-interface LikedItem {
-  postId: number;
-  title: string;
-  category: string;
-  createdAt: string;
-  viewCount: number;
-  likeCount: number;
-  image: string;
-  content: string;
-}
+import { useMyLikes } from "@/features/member/hooks/useMyLikes"; // ✅ 훅 임포트
 
 export default function MyLikesPage() {
-  const [likedList, setLikedList] = useState<LikedItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const { email } = useUserStore(); // ✅ 닉네임 대신 고유 식별자인 email을 사용
-
-  // ✅ 경로를 /api/members/likes로 수정 (정의된 위치에 맞게)
-  const fetchLikedContent = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      const response = await fetch(`/api/members/likes`, {
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        throw new Error(`Server responded with status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (Array.isArray(data)) {
-        // 최신순 정렬 (ID가 큰 순서대로)
-        const sortedData = data.sort(
-          (a: LikedItem, b: LikedItem) => b.postId - a.postId
-        );
-        setLikedList(sortedData);
-      }
-    } catch (error) {
-      console.error("좋아요 목록 로드 실패:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // 유저 정보(email)가 있을 때만 호출
-    if (email) fetchLikedContent();
-  }, [email, fetchLikedContent]);
+  /**
+   * ✅ [React Query 기반 데이터 바인딩]
+   * 훅 내부에서 email 유무 체크 및 Zustand 동기화가 자동으로 일어납니다.
+   * 자바의 @Service 호출 결과를 객체 바인딩하는 것과 같습니다.
+   */
+  const { data: likedList = [], isLoading } = useMyLikes();
 
   return (
     <div className="min-h-screen bg-white text-slate-900">
@@ -98,7 +56,7 @@ export default function MyLikesPage() {
             </div>
           ) : likedList.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12">
-              {likedList.map((item) => (
+              {likedList.map((item: any) => (
                 <Link
                   key={`liked-${item.postId}`}
                   href={

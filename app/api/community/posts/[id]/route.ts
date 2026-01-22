@@ -1,24 +1,25 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
+import fs from "fs/promises";
 import path from "path";
 
 const postsPath = path.join(process.cwd(), "data", "posts.json");
 const commentsPath = path.join(process.cwd(), "data", "comments.json");
 const likesPath = path.join(process.cwd(), "data", "likes.json");
-const usersPath = path.join(process.cwd(), "data", "users.json"); // 유저 활동량 업데이트용
+const usersPath = path.join(process.cwd(), "data", "users.json");
 
-const readJson = (filePath: string) => {
-  if (!fs.existsSync(filePath)) return [];
+// 헬퍼 함수: JSON 읽기 (비동기)
+const readJson = async (filePath: string) => {
   try {
-    const data = fs.readFileSync(filePath, "utf8");
+    const data = await fs.readFile(filePath, "utf8");
     return data ? JSON.parse(data) : [];
   } catch {
     return [];
   }
 };
 
-const writeJson = (filePath: string, data: any[]) => {
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
+// 헬퍼 함수: JSON 쓰기 (비동기)
+const writeJson = async (filePath: string, data: any[]) => {
+  await fs.writeFile(filePath, JSON.stringify(data, null, 2), "utf8");
 };
 
 // [GET] 상세 조회
@@ -29,25 +30,31 @@ export async function GET(
   try {
     const { id } = await params;
     const postId = Number(id);
-    const posts = readJson(postsPath);
-    const post = posts.find((p: any) => Number(p.postId) === postId);
+
+    const posts = await readJson(postsPath);
+    let post = posts.find((p: any) => Number(p.postId) === postId);
+
+    // 🚀 재시도 로직: 파일 쓰기 지연 방어
+    if (!post) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const retryPosts = await readJson(postsPath);
+      post = retryPosts.find((p: any) => Number(p.postId) === postId);
+    }
 
     if (!post) {
       return NextResponse.json(
-        { success: false, message: "게시글을 찾을 수 없습니다." },
+        { success: false, message: "Not Found" },
         { status: 404 }
       );
     }
+
     return NextResponse.json(post);
   } catch (error) {
-    return NextResponse.json(
-      { success: false, message: "조회 실패" },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false }, { status: 500 });
   }
 }
 
-// [PUT] 수정 (보안 강화 버전)
+// [PUT] 수정 (Dirty Checking 스타일)
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -56,17 +63,16 @@ export async function PUT(
     const { id } = await params;
     const postId = Number(id);
     const body = await request.json();
-    const posts = readJson(postsPath);
+    const posts = await readJson(postsPath);
 
     const postIndex = posts.findIndex((p: any) => Number(p.postId) === postId);
     if (postIndex === -1) {
       return NextResponse.json(
-        { success: false, message: "게시글이 없습니다." },
+        { success: false, message: "Not Found" },
         { status: 404 }
       );
     }
 
-    // ✅ 중요: 수정 가능한 필드만 허용 (보안)
     const { title, content, image, category, rating } = body;
 
     posts[postIndex] = {
@@ -76,23 +82,17 @@ export async function PUT(
       image: image ?? posts[postIndex].image,
       category: category ?? posts[postIndex].category,
       rating: category === "캠핑장비 리뷰" ? rating : undefined,
-      updatedAt: new Date()
-        .toLocaleDateString("ko-KR")
-        .replace(/\. /g, ".")
-        .replace(/\.$/, ""),
+      updatedAt: new Date().toISOString().split("T")[0].replace(/-/g, "."),
     };
 
-    writeJson(postsPath, posts);
-    return NextResponse.json({ success: true, message: "수정되었습니다." });
+    await writeJson(postsPath, posts);
+    return NextResponse.json({ success: true, message: "Updated" });
   } catch (error) {
-    return NextResponse.json(
-      { success: false, message: "수정 실패" },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false }, { status: 500 });
   }
 }
 
-// [DELETE] 연쇄 삭제 및 유저 활동량 차감
+// [DELETE] 연쇄 삭제 및 통계 동기화 (Transaction 개념 적용)
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -101,60 +101,81 @@ export async function DELETE(
     const { id } = await params;
     const postId = Number(id);
 
-    const posts = readJson(postsPath);
-    const postToDelete = posts.find((p: any) => Number(p.postId) === postId);
+    // 1. 모든 데이터 병렬 로드
+    const [posts, comments, likes, users] = await Promise.all([
+      readJson(postsPath),
+      readJson(commentsPath),
+      readJson(likesPath),
+      readJson(usersPath),
+    ]);
 
+    const postToDelete = posts.find((p: any) => Number(p.postId) === postId);
     if (!postToDelete) {
       return NextResponse.json(
-        { success: false, message: "삭제할 게시글이 없습니다." },
+        { success: false, message: "Not Found" },
         { status: 404 }
       );
     }
 
-    // 1. 게시글 삭제
+    // 2. 물리적 연쇄 삭제 (Cascade Delete)
     const filteredPosts = posts.filter((p: any) => Number(p.postId) !== postId);
-    writeJson(postsPath, filteredPosts);
-
-    // 2. 관련 데이터(댓글, 좋아요) 삭제
-    const filteredComments = readJson(commentsPath).filter(
+    const filteredComments = comments.filter(
       (c: any) => Number(c.postId) !== postId
     );
-    writeJson(commentsPath, filteredComments);
+    const filteredLikes = likes.filter((l: any) => Number(l.postId) !== postId);
 
-    const filteredLikes = readJson(likesPath).filter(
-      (l: any) => Number(l.postId) !== postId
-    );
-    writeJson(likesPath, filteredLikes);
-
-    // 3. ✅ 마이페이지 통계 업데이트 (작성자 활동량 차감)
-    const users = readJson(usersPath);
+    // 🚀 3. 유저 활동 통계 업데이트 (Synchronization)
+    const authorEmail = postToDelete.authorEmail?.trim().toLowerCase();
     const userIndex = users.findIndex(
-      (u: any) => u.email === postToDelete.authorEmail
+      (u: any) => u.email?.trim().toLowerCase() === authorEmail
     );
 
-    if (userIndex !== -1 && users[userIndex].activity) {
-      users[userIndex].activity.boardCount = Math.max(
+    if (userIndex !== -1) {
+      const user = users[userIndex];
+      if (!user.activity) {
+        user.activity = {
+          boardCount: 0,
+          commentCount: 0,
+          reviewCount: 0,
+          likeCount: 0,
+        };
+      }
+
+      // 게시글 수 차감
+      user.activity.boardCount = Math.max(
         0,
-        users[userIndex].activity.boardCount - 1
+        (user.activity.boardCount || 0) - 1
       );
+
+      // 리뷰 게시글인 경우 리뷰 수 차감
       if (postToDelete.category === "캠핑장비 리뷰") {
-        users[userIndex].activity.reviewCount = Math.max(
+        user.activity.reviewCount = Math.max(
           0,
-          users[userIndex].activity.reviewCount - 1
+          (user.activity.reviewCount || 0) - 1
         );
       }
-      writeJson(usersPath, users);
+
+      // 🎯 핵심: 게시글이 삭제될 때 해당 글이 받았던 좋아요 수만큼 작성자의 '받은 좋아요' 카운트 차감
+      const likesOnThisPost = likes.filter(
+        (l: any) => Number(l.postId) === postId
+      ).length;
+      user.activity.likeCount = Math.max(
+        0,
+        (user.activity.likeCount || 0) - likesOnThisPost
+      );
     }
 
-    return NextResponse.json({
-      success: true,
-      message: "게시글 및 관련 데이터가 모두 삭제되었습니다.",
-    });
+    // 4. 모든 변경사항 병렬 저장 (Atomic Write)
+    await Promise.all([
+      writeJson(postsPath, filteredPosts),
+      writeJson(commentsPath, filteredComments),
+      writeJson(likesPath, filteredLikes),
+      writeJson(usersPath, users),
+    ]);
+
+    return NextResponse.json({ success: true, message: "Deleted" });
   } catch (error) {
-    console.error("삭제 실패:", error);
-    return NextResponse.json(
-      { success: false, message: "삭제 실패" },
-      { status: 500 }
-    );
+    console.error("Delete Error:", error);
+    return NextResponse.json({ success: false }, { status: 500 });
   }
 }
